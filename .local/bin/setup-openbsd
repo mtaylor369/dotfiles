@@ -1,0 +1,810 @@
+#!/bin/sh
+#
+# setup-openbsd
+#
+# Personal post-installation script to set up OpenBSD 7.5 for desktop use.
+#
+# Usage: setup-openbsd
+#
+set -eu
+umask 022
+
+error_msg() {
+	printf '%s: %s\n' "${0##*/}" "$*" >&2
+}
+
+msg() {
+	printf '==> %s\n' "$*" >&2
+}
+
+get_home_dir() (
+	user="$1"
+	user_home_dir="$(getent passwd "${user}" | cut -d ':' -f 6)"
+
+	if [ -z "${user_home_dir}" ] || [ ! -d "${user_home_dir}" ]; then
+		error_msg "${user}:" \
+		    'failed to get the home directory for this user'
+		exit 1
+	fi
+
+	printf '%s\n' "${user_home_dir}"
+)
+
+create_file() (
+	mode="$1"
+	file="$2"
+
+	if [ -e "${file}" ]; then
+		if [ ! -f "${file}" ]; then
+			error_msg "cannot update ${file}:" \
+			    'existing path is not a regular file'
+			exit 1
+		fi
+
+		if [ -z "${admin-}" ] || ! id "${admin}" >/dev/null 2>&1; then
+			error_msg "cannot backup ${file}:" \
+			    'no system administrator user has been set up'
+			exit 1
+		fi
+
+		if [ -z "${backup_dir-}" ] || [ ! -d "${backup_dir}" ]; then
+			error_msg "cannot backup ${file}:" \
+			    'no backup directory has been set up'
+			exit 1
+		fi
+
+		file_dir="$(dirname "${file}")"
+		dest_dir="${backup_dir}$(realpath "${file_dir}")"
+		mkdir -p "${dest_dir}"
+		cp -p "${file}" "${dest_dir}"
+		chown -R "${admin}:${admin}" "${dest_dir}"
+		str='update:Updated'
+	else
+		file_dir="$(dirname "${file}")"
+		mkdir -p "${file_dir}"
+		str='create:Created'
+	fi
+
+	if command -v mktemp >/dev/null; then
+		tmp_file="$(mktemp -t "${file##*/}.XXXXXXXX")"
+	else
+		tmp_file="$(printf 'mkstemp(%s)\n' \
+		    "${TMPDIR:-/tmp}/${file##*/}.XXXXXXXX" | m4)"
+
+		if [ ! -f "${tmp_file}" ]; then
+			error_msg 'failed to create temporary file'
+			exit 1
+		fi
+	fi
+
+	trap 'rm "${tmp_file}"; trap - EXIT' EXIT
+	cat >"${tmp_file}"
+
+	if ! grep -qvx '' "${tmp_file}"; then
+		error_msg "cannot ${str%%:*} ${file}: file content was empty"
+		exit 1
+	fi
+
+	chmod "${mode}" "${tmp_file}"
+	mv "${tmp_file}" "${file}"
+	trap - EXIT
+	printf '%s: %s\n' "${str##*:}" "${file}" >&2
+)
+
+create_delimited_list() (
+	field_sep="$1"
+
+	awk -v field_sep="${field_sep}" '
+	{
+		printf("%s%s", (NR > 1) ? field_sep : "", $0);
+	}
+
+	END {
+		printf("\n");
+	}'
+)
+
+floor() (
+	expr="$1"
+	result="$(printf 'x = %s; scale = 0; x / 1\n' "${expr}" | bc -l)"
+
+	case "${result}" in
+		''|*[!0-9-]*|'-'|*[0-9]*'-'*)
+			error_msg "${expr}: failed to floor expression"
+			exit 1
+			;;
+		*)
+			;;
+	esac
+
+	printf '%s\n' "${result}"
+)
+
+get_interface_status() (
+	interface="$1"
+	ifconfig_output="$(ifconfig "${interface}")"
+
+	printf '%s\n' "${ifconfig_output}" | awk '
+	BEGIN {
+		status = "unknown";
+	}
+
+	$0 ~ /^[\t ]*status:[\t ]*/ {
+		sub(/^[\t ]*status:[\t ]*/, "", $0);
+		sub(/[\t ]*$/, "", $0);
+		status = $0;
+		exit 0;
+	}
+
+	END {
+		printf("%s\n", status);
+	}'
+)
+
+if [ "$(uname -s)" != 'OpenBSD' ]; then
+	error_msg 'this script must be run on OpenBSD'
+	exit 1
+fi
+
+if [ "$(id -u)" != '0' ]; then
+	error_msg 'this script must be run as root'
+	exit 1
+fi
+
+hostname="$(uname -n)"
+hostname="${hostname%%.*}"
+readonly hostname
+
+case "${hostname}" in
+	'desktop-pc')
+		readonly admin='matt'
+		readonly admin_comment='Matthew Taylor'
+		readonly firmware_dir='/mnt/firmware'
+		readonly master_volume_level='255,255'
+		readonly gpu_driver='amdgpu'
+		readonly display_width=3840
+		readonly display_height=2160
+		readonly display_scale=2
+		readonly performance_mode='high'
+		readonly wlan_interface='iwm0'
+
+		package_list="$(cat)" <<-EOF
+		cmus--
+		colorls--
+		ffmpeg--
+		firefox--
+		git--
+		inkscape--
+		krita--
+		libarchive--
+		lmms--
+		mpv--
+		rgbds--
+		sameboy--
+		vim--no_x11
+		xclip--
+		EOF
+
+		readonly package_list
+		;;
+	*)
+		error_msg "${hostname}: unknown system hostname"
+		exit 1
+		;;
+esac
+
+msg "Setting up the system administrator user ${admin}..."
+
+if ! id "${admin}" >/dev/null 2>&1; then
+	useradd -c "${admin_comment:-"${admin}"}" -m "${admin}"
+	passwd "${admin}"
+fi
+
+usermod -G '_shutdown,staff,wheel' -L staff "${admin}"
+
+if [ -n "${firmware_dir-}" ]; then
+	msg 'Installing firmware packages...'
+
+	if [ -d "${firmware_dir}" ]; then
+		fw_update -p "${firmware_dir}"
+	else
+		printf 'WARNING: %s, continue? [no] ' \
+		    "${firmware_dir}: no such directory exists" >&2
+		read -r reply </dev/tty
+
+		case "${reply}" in
+			[Yy]|[Yy][Ee][Ss])
+				;;
+			*)
+				exit 1
+				;;
+		esac
+	fi
+fi
+
+msg 'Setting up the backup directory...'
+
+admin_home_dir="$(get_home_dir "${admin}")"
+readonly admin_home_dir
+
+for dir in \
+    "${admin_home_dir}/.local" \
+    "${admin_home_dir}/.local/share" \
+    "${admin_home_dir}/.local/share/${0##*/}"; do
+	mkdir -p "${dir}"
+	chown "${admin}:${admin}" "${dir}"
+done
+
+timestamp="$(date '+%Y-%m-%dT%H%M%S')"
+
+if command -v mktemp >/dev/null; then
+	backup_dir="$(mktemp -d "${dir}/${timestamp}-XXXXXXXX")"
+else
+	backup_dir="$(printf 'mkstemp(%s)\n' \
+	    "${dir}/${timestamp}-XXXXXXXX" | m4)"
+
+	if [ ! -f "${backup_dir}" ]; then
+		error_msg 'failed to create backup directory'
+		exit 1
+	fi
+
+	rm "${backup_dir}"
+	mkdir "${backup_dir}"
+fi
+
+readonly backup_dir
+chmod 0755 "${backup_dir}"
+chown "${admin}:${admin}" "${backup_dir}"
+printf 'Created: %s\n' "${backup_dir}" >&2
+
+msg 'Setting up configuration files for boot(8), rc(8), and login(1)...'
+
+# At boot, load the kernel immediately without prompting.
+create_file 0644 /etc/boot.conf <<EOF
+boot
+EOF
+
+# Add the mount option "noatime" to each writable FFS file system in fstab(5).
+awk '
+{
+	if ($0 !~ /^[\t ]*#/ \
+	    && $3 == "ffs" \
+	    && $4 ~ /(^|,)rw(,|$)/ \
+	    && $4 !~ /(^|,)noatime(,|$)/) {
+		sub(/rw/, "rw,noatime", $4);
+	}
+
+	sub(/[\t ]*$/, "", $0);
+	gsub(/[\t ]+/, " ", $0);
+	printf("%s\n", $0);
+}' /etc/fstab | create_file 0644 /etc/fstab
+
+# Increase system resource limits for the kernel.
+create_file 0644 /etc/sysctl.conf <<EOF
+kern.maxfiles=32768
+kern.maxproc=8192
+kern.maxthread=16384
+kern.shminfo.shmall=536870912
+kern.shminfo.shmmax=2145386496
+kern.shminfo.shmmni=4096
+EOF
+
+# Increase system resource limits for the staff user group.
+create_file 0644 /etc/login.conf.d/staff <<EOF
+staff:\\
+	:datasize-cur=8192M:\\
+	:datasize-max=infinity:\\
+	:maxproc-cur=512:\\
+	:maxproc-max=1024:\\
+	:openfiles-cur=512:\\
+	:openfiles-max=1024:\\
+	:stacksize-cur=8M:\\
+	:ignorenologin:\\
+	:requirehome@:\\
+	:rc=default:
+EOF
+
+# Set a new default master volume level.
+if [ -n "${master_volume_level-}" ]; then
+	mixerctl "outputs.master=${master_volume_level}" >/dev/null
+
+	create_file 0644 /etc/mixerctl.conf <<-EOF
+	outputs.master=${master_volume_level}
+	EOF
+fi
+
+# Set the message of the day to only show the kernel version.
+sysctl -n 'kern.version' | head -n 1 | create_file 0644 /etc/motd
+
+msg 'Setting up configuration files for doas(1) and smtpd(8)...'
+
+# Allow the system administrator to run commands as root.
+create_file 0600 /etc/doas.conf <<EOF
+permit ${admin}
+permit nopass ${admin} as root cmd ${admin_home_dir}/.local/bin/lsfs
+permit nopass ${admin} as root cmd mount
+permit nopass ${admin} as root cmd umount
+permit nopass ${admin} as root cmd halt
+permit nopass ${admin} as root cmd reboot
+permit nopass ${admin} as root cmd shutdown
+EOF
+
+# Set the three standard mail aliases to go to the system administrator.
+awk -v root="${admin}" -v manager='root' -v dumper='root' '
+BEGIN {
+	mail_aliases_printed = 0;
+}
+
+{
+	if ($0 ~ /^(# ?)?root:/) {
+		if (mail_aliases_printed == 0) {
+			printf("root: %s\n", root);
+			printf("manager: %s\n", manager);
+			printf("dumper: %s\n", dumper);
+			mail_aliases_printed = 1;
+		}
+
+		next;
+	}
+
+	if ($0 ~ /^(# ?)?(manager|dumper):/) {
+		next;
+	}
+
+	sub(/[\t ]*$/, "", $0);
+
+	if (match($0, /^(# ?)?[A-Za-z0-9\-_]+:/) > 0) {
+		mail_alias_key = substr($0, RSTART, RLENGTH);
+		mail_alias_value = substr($0, RSTART + RLENGTH);
+		sub(/^# ?/, "# ", mail_alias_key);
+		sub(/^[\t ]*/, " ", mail_alias_value);
+		printf("%s%s\n", mail_alias_key, mail_alias_value);
+		next;
+	}
+
+	printf("%s\n", $0);
+}
+
+END {
+	if (mail_aliases_printed == 0) {
+		printf("\n");
+		printf("# Well-known aliases -- these should be filled in!\n");
+		printf("root: %s\n", root);
+		printf("manager: %s\n", manager);
+		printf("dumper: %s\n", dumper);
+	}
+}' /etc/mail/aliases | create_file 0644 /etc/mail/aliases
+
+newaliases
+root_home_dir="$(get_home_dir root)"
+chmod 0700 "${root_home_dir}"
+
+# From now on, forward the root user's mail to the system administrator.
+create_file 0644 "${root_home_dir}/.forward" <<EOF
+${admin}
+EOF
+
+msg 'Setting up configuration files for ntpd(8)...'
+
+# Change the URL to use for Network Time Protocol (NTP) constraints.
+awk -v url='www.openbsd.org' '
+BEGIN {
+	constraints_printed = 0;
+}
+
+{
+	if ($0 ~ /^constraints from /) {
+		if (constraints_printed == 0) {
+			printf("constraints from \"%s\"\n", url);
+			constraints_printed = 1;
+		}
+
+		next;
+	}
+
+	sub(/[\t ]*$/, "", $0);
+	printf("%s\n", $0);
+}
+
+END {
+	if (constraints_printed == 0) {
+		printf("\n");
+		printf("constraints from \"%s\"\n", url);
+	}
+}' /etc/ntpd.conf | create_file 0644 /etc/ntpd.conf
+
+msg 'Setting up configuration files for ssh(1) and sshd(8)...'
+
+host_key_algorithms="$(create_delimited_list ',')" <<EOF
+ssh-ed25519-cert-v01@openssh.com
+sk-ssh-ed25519-cert-v01@openssh.com
+rsa-sha2-512-cert-v01@openssh.com
+rsa-sha2-256-cert-v01@openssh.com
+ssh-ed25519
+sk-ssh-ed25519@openssh.com
+rsa-sha2-512
+rsa-sha2-256
+EOF
+
+kex_algorithms="$(create_delimited_list ',')" <<EOF
+sntrup761x25519-sha512@openssh.com
+curve25519-sha256
+curve25519-sha256@libssh.org
+diffie-hellman-group-exchange-sha256
+diffie-hellman-group16-sha512
+diffie-hellman-group18-sha512
+EOF
+
+ciphers="$(create_delimited_list ',')" <<EOF
+chacha20-poly1305@openssh.com
+aes256-ctr
+aes192-ctr
+aes128-ctr
+aes256-gcm@openssh.com
+aes128-gcm@openssh.com
+EOF
+
+macs="$(create_delimited_list ',')" <<EOF
+hmac-sha2-512-etm@openssh.com
+hmac-sha2-256-etm@openssh.com
+umac-128-etm@openssh.com
+EOF
+
+create_file 0644 /etc/ssh/ssh_config <<EOF
+#
+# ssh_config
+#
+Host *
+  HashKnownHosts yes
+  HostKeyAlgorithms ${host_key_algorithms}
+  KexAlgorithms ${kex_algorithms}
+  Ciphers ${ciphers}
+  MACs ${macs}
+EOF
+
+create_file 0644 /etc/ssh/sshd_config <<EOF
+#
+# sshd_config
+#
+HostKey /etc/ssh/ssh_host_ed25519_key
+HostKey /etc/ssh/ssh_host_rsa_key
+
+KexAlgorithms ${kex_algorithms}
+Ciphers ${ciphers}
+MACs ${macs}
+
+# Only allow user ${admin} to login using public key authentication.
+PermitRootLogin no
+AllowUsers ${admin}
+AuthenticationMethods publickey
+AuthorizedKeysFile %h/.ssh/authorized_keys
+PasswordAuthentication no
+ChallengeResponseAuthentication no
+LoginGraceTime 30
+
+# Timeout a client session after 5 minutes of inactivity.
+ClientAliveCountMax 3
+ClientAliveInterval 100
+
+# Log verbosely and log messages from the SFTP server subsystem.
+LogLevel VERBOSE
+Subsystem sftp /usr/libexec/sftp-server -f AUTH -l INFO
+EOF
+
+ssh-keygen -Aa 128
+
+msg 'Setting up configuration files for Xorg(1)...'
+
+# Enable tear-free rendering in X for AMD GPUs.
+case "${gpu_driver-}" in
+	'amdgpu')
+		tab="$(printf '\t')"
+
+		create_file 0644 /etc/X11/xorg.conf.d/10-amdgpu.conf <<-EOF
+		Section "Device"
+		${tab}Identifier "AMD Radeon Graphics"
+		${tab}Driver "amdgpu"
+		${tab}Option "TearFree" "on"
+		EndSection
+		EOF
+		;;
+	'')
+		;;
+	*)
+		error_msg "${gpu_driver}: unknown GPU driver string"
+		exit 1
+		;;
+esac
+
+#
+# Reconfigure mouse buttons to differentiate between the backward and forward
+# buttons and vertical scrolling buttons.
+#
+# WARNING: This may break vertical scrolling in some applications!
+#
+create_file 0644 /etc/X11/xorg.conf.d/20-ws.conf <<EOF
+Section "InputClass"
+	Identifier "Pointer"
+	MatchDriver "ws"
+	Driver "ws"
+	Option "Device" "/dev/wsmouse"
+	Option "Buttons" "11"
+	Option "ButtonMapping" "1 2 3 8 9 6 7 0 0 4 5"
+	Option "ZAxisMapping" "10 11"
+EndSection
+EOF
+
+msg 'Setting up configuration files for xenodm(1)...'
+
+for str in \
+    "width:${display_width}" \
+    "height:${display_height}" \
+    "scale:${display_scale}"; do
+	case "${str#*:}" in
+		''|*[!0-9]*|'0'|'0'*[!1-9]*)
+			error_msg "${str#*:}: invalid display ${str%%:*}"
+			exit 1
+			;;
+		*)
+			;;
+	esac
+done
+
+cursor_size="$(floor "24 * ${display_scale}")"
+font_dpi="$(floor "96 * ${display_scale}")"
+xlogin_width="$(floor "360 * ${display_scale}")"
+xlogin_height="$(floor "188 * ${display_scale}")"
+xlogin_x="$(floor "(${display_width} - ${xlogin_width}) / 2")"
+xlogin_y="$(floor "(${display_height} * 0.45) - (${xlogin_height} / 2)")"
+
+create_file 0444 /etc/X11/xenodm/Xresources <<EOF
+!
+! Xresources
+!
+
+! Xcursor configuration:
+Xcursor.size: ${cursor_size}
+Xcursor.theme: Adwaita
+
+! xlogin window configuration:
+xlogin.Login.allowRootLogin: false
+xlogin.Login.allowNullPasswd: false
+xlogin.Login.greeting: CLIENTHOST
+xlogin.Login.unsecureGreeting: CLIENTHOST (Unsecure)
+xlogin.Login.namePrompt: \\040\\040\\040\\040User
+xlogin.Login.passwdPrompt: Password
+xlogin.Login.echoPasswd: true
+xlogin.Login.echoPasswdChar: *
+xlogin.Login.changePasswdMessage: Password Change Required
+xlogin.Login.fail: Login Failed
+xlogin.Login.failTimeout: 10
+xlogin.Login.useShape false
+
+! xlogin window fonts:
+xlogin.Login.greetFace: DejaVu Sans Mono-10:dpi=${font_dpi}
+xlogin.Login.promptFace: DejaVu Sans Mono-12:bold:dpi=${font_dpi}
+xlogin.Login.face: DejaVu Sans Mono-10:dpi=${font_dpi}
+xlogin.Login.failFace: DejaVu Sans Mono-10:bold:dpi=${font_dpi}
+
+! xlogin window position and size:
+#if WIDTH == ${display_width} && HEIGHT >= ${display_height}
+xlogin.Login.x: ${xlogin_x}
+xlogin.Login.y: ${xlogin_y}
+#endif
+xlogin.Login.width: ${xlogin_width}
+xlogin.Login.height: ${xlogin_height}
+
+! xlogin window border widths and padding:
+xlogin.borderWidth: 0
+xlogin.Login.frameWidth: 0
+xlogin.Login.innerFramesWidth: 0
+xlogin.Login.sepWidth: 0
+xlogin.Login.logoPadding: 0
+
+! xlogin window colours:
+xlogin.borderColor: #202020
+xlogin.Login.foreground: #FFFFFF
+xlogin.Login.background: #202020
+xlogin.Login.hiColor: #202020
+xlogin.Login.shdColor: #202020
+xlogin.Login.greetColor: #B0B0B0
+xlogin.Login.promptColor: #FFFFFF
+xlogin.Login.inpColor: #181818
+xlogin.Login.failColor: #FF88A0
+
+! xlogin window keyboard translations:
+xlogin.Login.translations: #override \\
+    <Key>Left: move-backward-character()\\n \\
+    <Key>Right: move-forward-character()\\n \\
+    <Key>Home: move-to-begining()\\n \\
+    <Key>End: move-to-end()\\n \\
+    <Key>Return: set-session-argument() finish-field()\\n \\
+    <Key>KP_Enter: set-session-argument() finish-field()\\n \\
+    <Key>F1: set-session-argument(failsafe) finish-field()\\n \\
+    Ctrl<Key>Return: set-session-argument(failsafe) finish-field()\\n \\
+    Ctrl<Key>KP_Enter: set-session-argument(failsafe) finish-field()
+EOF
+
+create_file 0755 /etc/X11/xenodm/Xsetup_0 <<EOF
+#!/bin/sh
+#
+# Xsetup_0
+#
+# Initialise the xenodm(1) login screen.
+#
+prefix='/usr/X11R6'
+exec_prefix="\${prefix}"
+"\${exec_prefix}/bin/xset" b off
+"\${exec_prefix}/bin/xsetroot" -solid '#202020'
+EOF
+
+create_file 0755 /etc/X11/xenodm/Xsession <<EOF
+#!/bin/sh
+#
+# Xsession
+#
+# Initialise an X session.
+#
+prefix='/usr/X11R6'
+exec_prefix="\${prefix}"
+
+# If possible, redirect errors to a file in the user's home directory.
+for errfile in \\
+    "\${HOME}/.local/state/X11/Xsession-errors" \\
+    "\${HOME}/.xsession-errors" \\
+    "\${TMPDIR:-/tmp}/xses-\${USER}" \\
+    "/tmp/xses-\${USER}"; do
+	if [ -z "\${errfile##"\${HOME}/"?*}" ]; then
+		if (umask 077 && cp /dev/null "\${errfile}" 2>/dev/null); then
+			exec >"\${errfile}" 2>&1
+			break
+		fi
+	else
+		ef="\$(umask 077 && mktemp "\${errfile}.XXXXXXXX" 2>/dev/null)"
+
+		if [ -f "\${ef}" ]; then
+			exec >"\${ef}" 2>&1
+			mv "\${ef}" "\${errfile}" 2>/dev/null
+			break
+		fi
+	fi
+done
+
+# If the user has private SSH keys, start ssh-agent(1) and add these keys.
+if [ -z "\${SSH_AGENT_PID-}" ] && command -v ssh-agent >/dev/null; then
+	for k in \\
+	    'id_ed25519' \\
+	    'id_ed25519_sk' \\
+	    'id_rsa' \\
+	    'id_ecdsa' \\
+	    'id_ecdsa_sk' \\
+	    'id_dsa'; do
+		if [ -f "\${HOME}/.ssh/\${k}" ]; then
+			eval "\$(ssh-agent -s)"
+			ssh-add </dev/null
+			break
+		fi
+	done
+fi
+
+do_exit() {
+	if [ -n "\${SSH_AGENT_PID-}" ]; then
+		ssh-add -D </dev/null
+		eval "\$(ssh-agent -sk)"
+	fi
+
+	exit
+}
+
+if [ "\$#" -gt 0 ] && [ "\$1" = 'failsafe' ]; then
+	"\${exec_prefix}/bin/xterm" -geometry '80x24-0-0'
+	do_exit
+fi
+
+# The startup script is not intended to have arguments.
+for startup in "\${HOME}/.config/X11/Xsession" "\${HOME}/.xsession"; do
+	if [ -f "\${startup}" ] && [ -s "\${startup}" ]; then
+		if [ -x "\${startup}" ]; then
+			"\${startup}"
+		else
+			/bin/sh "\${startup}"
+		fi
+
+		do_exit
+	fi
+done
+
+for resources in "\${HOME}/.config/X11/Xresources" "\${HOME}/.Xresources"; do
+	if [ -f "\${resources}" ]; then
+		"\${exec_prefix}/bin/xrdb" -load "\${resources}"
+		break
+	fi
+done
+
+"\${exec_prefix}/bin/xterm" &
+"\${exec_prefix}/bin/cwm"
+do_exit
+EOF
+
+msg 'Setting up system daemons...'
+
+rcctl enable apmd ntpd smtpd sndiod sshd xenodm
+
+case "${performance_mode-}" in
+	'auto')
+		rcctl set apmd flags -A
+		;;
+	'high')
+		rcctl set apmd flags -H
+		;;
+	'low')
+		rcctl set apmd flags -L
+		;;
+	'')
+		;;
+	*)
+		error_msg "${performance_mode}: unknown performance mode string"
+		exit 1
+		;;
+esac
+
+rcctl stop apmd ntpd sndiod sshd >/dev/null
+rcctl start apmd ntpd sndiod sshd
+
+if [ -n "${wlan_interface-}" ]; then
+	msg "Setting up the wireless network interface ${wlan_interface}..."
+
+	status="$(get_interface_status "${wlan_interface}")"
+
+	if [ "${status}" != 'active' ]; then
+		ssid=''
+		wpakey=''
+
+		while [ -z "${ssid}" ]; do
+			printf 'Enter network SSID: '
+			read -r ssid </dev/tty
+		done
+
+		while [ -z "${wpakey}" ]; do
+			printf 'Enter network WPA key: '
+			read -r wpakey </dev/tty
+		done
+
+		create_file 0640 "/etc/hostname.${wlan_interface}" <<-EOF
+		join ${ssid} wpakey ${wpakey}
+		inet autoconf
+		EOF
+
+		sh /etc/netstart "${wlan_interface}"
+		timeout=60
+
+		while [ "${timeout}" -gt 0 ]; do
+			sleep 1
+			status="$(get_interface_status "${wlan_interface}")"
+			[ "${status}" != 'active' ] || break
+			timeout="$((timeout - 1))"
+		done
+
+		if [ "${timeout}" -lt 1 ]; then
+			error_msg "failed to connect to ${ssid}:" \
+			    "${wlan_interface} status:" \
+			    "${status}"
+			exit 1
+		fi
+
+		sleep 10
+	fi
+fi
+
+msg 'Installing system patches...'
+
+if [ -n "$(syspatch -c)" ]; then
+	syspatch
+	sysmerge -b
+fi
+
+if [ -n "${package_list-}" ]; then
+	msg 'Installing software packages...'
+
+	printf '%s\n' "${package_list}" | pkg_add -l /dev/stdin -Uu
+fi

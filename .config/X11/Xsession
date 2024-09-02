@@ -1,0 +1,56 @@
+#!/bin/sh
+#
+# Xsession
+#
+# Initialise an X session.
+#
+
+# Source the login shell startup script.
+if [ -f "${HOME}/.profile" ]; then
+	. "${HOME}/.profile"
+fi
+
+# Make sure the following environment variables are set.
+: "${XDG_CONFIG_HOME:="${HOME}/.config"}"
+: "${XDG_DATA_HOME:="${HOME}/.local/share"}"
+
+# Set up environment variables for GTK and Qt applications.
+export GDK_SCALE=2
+export GDK_DPI_SCALE='0.5'
+export QT_XCB_NO_XI2=1
+
+# If possible, disable the creation of core dump files.
+case "${SHELL+"${SHELL##*/}"}" in
+	'bash'|'ksh')
+		ulimit -Sc 0
+		;;
+esac
+
+# Set up the X session.
+xset b off
+xset r rate 500 50
+
+if [ -f "${XDG_CONFIG_HOME}/X11/Xresources" ]; then
+	xrdb -merge "${XDG_CONFIG_HOME}/X11/Xresources"
+fi
+
+bg_tile="${XDG_DATA_HOME}/X11/bitmaps/checkboard-16x16.xbm"
+
+if [ -f "${bg_tile}" ]; then
+	xsetroot -bitmap "${bg_tile}" -bg "#3C3C3C" -fg '#444444'
+else
+	xsetroot -solid '#404040'
+fi
+
+unset bg_tile
+
+if command -v xstatus >/dev/null; then
+	xterm -class XTermBar -geometry '238x1+0+0' -e xstatus &
+fi
+
+# Start the window manager.
+if [ -f "${XDG_CONFIG_HOME}/cwm/cwmrc" ]; then
+	exec cwm -c "${XDG_CONFIG_HOME}/cwm/cwmrc"
+else
+	exec cwm
+fi

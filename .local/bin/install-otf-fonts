@@ -1,0 +1,79 @@
+#!/bin/sh
+#
+# install-otf-fonts
+#
+# Recursively find and install all OpenType font files within a given directory.
+#
+# Usage: install-otf-fonts directory ...
+#
+set -eu
+umask 022
+
+error_msg() {
+	printf '%s: %s\n' "${0##*/}" "$*" >&2
+}
+
+usage() {
+	cat >&2 <<-EOF
+	usage: install-otf-fonts directory ...
+	EOF
+}
+
+if [ "$#" -lt 1 ]; then
+	usage
+	exit 1
+fi
+
+readonly font_dir="${XDG_DATA_HOME:-"${HOME}/.local/share"}/fonts/otf"
+
+for dir in "$@"; do
+	if [ ! -d "${dir}" ]; then
+		error_msg "${dir}: no such directory exists"
+		exit 1
+	fi
+
+	while IFS='' read -r file; do
+		[ -f "${file}" ] || continue
+		font_path="$(fc-query \
+		    -f '%{family[0]}/%{family[0]}-%{style[0]}.otf\n' \
+		    "${file}")"
+
+		font_path="$(printf '%s\n' "${font_path}" | awk '
+		BEGIN {
+			font_path = "";
+		}
+
+		NR == 1 && $0 ~ /^.*[^\001- \177].*\/.*[^\001- \177].*\.otf$/ {
+			gsub(/[\001- \177]+/, "", $0);
+			font_path = $0;
+			next;
+		}
+
+		NR > 1 {
+			font_path = "";
+			exit 0;
+		}
+
+		END {
+			printf("%s\n", font_path);
+		}')"
+
+		if [ -z "${font_path}" ]; then
+			printf 'WARNING: ignored file: %s\n' "${file}" >&2
+			continue
+		fi
+
+		dest_file="${font_dir}/${font_path}"
+		dest_dir="$(dirname "${dest_file}")"
+		mkdir -p "${dest_dir}"
+		cp "${file}" "${dest_file}"
+		chmod 0644 "${dest_file}"
+		printf 'Installed: %s\n' "${dest_file}" >&2
+	done <<-EOF
+	$(find "${dir}" ! -path "$(printf '*\n*')" \
+	    -a -type f \
+	    -a -iname '*.otf' | sort -u)
+	EOF
+done
+
+fc-cache

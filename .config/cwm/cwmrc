@@ -1,0 +1,69 @@
+#
+# cwmrc
+#
+
+# Window configuration:
+sticky yes
+autogroup 0 "xterm,XTermBar"
+ignore xstatus
+gap 64 0 0 0
+snapdist 24
+borderwidth 2
+color activeborder "#606060"
+color inactiveborder "#000000"
+color groupborder "#FFD070"
+color ungroupborder "#FFD070"
+color urgencyborder "#FF88A0"
+
+# Menu configuration:
+fontname "Fira Sans:medium:pixelsize=26"
+color font "#FFFFFF"
+color selfont "#000000"
+color menubg "#202020"
+color menufg "#FFFFFF"
+
+# Key bindings:
+unbind-key all
+bind-key 4S-q quit
+bind-key 4S-Return terminal
+bind-key 4S-backslash firefox
+bind-key 4-space "xterm -geometry '80x24+1264+600' -e launcher"
+bind-key 4-minus "vol down"
+bind-key 4-equal "vol up"
+bind-key 4-BackSpace "vol toggle-mute"
+bind-key 4-1 group-only-1
+bind-key 4-2 group-only-2
+bind-key 4-3 group-only-3
+bind-key 4-4 group-only-4
+bind-key 4-5 group-only-5
+bind-key 4-6 group-only-6
+bind-key 4-7 group-only-7
+bind-key 4-8 group-only-8
+bind-key 4-9 group-only-9
+bind-key 4-0 group-toggle-all
+bind-key 4S-1 window-movetogroup-1
+bind-key 4S-2 window-movetogroup-2
+bind-key 4S-3 window-movetogroup-3
+bind-key 4S-4 window-movetogroup-4
+bind-key 4S-5 window-movetogroup-5
+bind-key 4S-6 window-movetogroup-6
+bind-key 4S-7 window-movetogroup-7
+bind-key 4S-8 window-movetogroup-8
+bind-key 4S-9 window-movetogroup-9
+bind-key 4-l group-cycle
+bind-key 4-h group-rcycle
+bind-key 4-j window-cycle
+bind-key 4-k window-rcycle
+bind-key 4S-c window-close
+bind-key 4S-j window-lower
+bind-key 4S-k window-raise
+bind-key 4S-0 window-stick
+bind-key 4S-f window-fullscreen
+bind-key 4-m window-maximize
+bind-key 4-Return window-vtile
+
+# Mouse bindings:
+unbind-mouse all
+bind-mouse 3 menu-cmd
+bind-mouse 4-1 window-move
+bind-mouse 4-3 window-resize

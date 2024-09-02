@@ -1,0 +1,394 @@
+#!/bin/sh
+#
+# xstatus
+#
+# Command-line status bar for X.
+#
+# Usage: xstatus
+#
+set -eu
+readonly divider=' | '
+readonly group_list_width="$((9 * 3))"
+app_name_cache=''
+
+term_setup() {
+	stty -echo
+	printf '\033[?1049h\033[?25l\033[0;0H'
+}
+
+term_restore() {
+	printf '\033[?25h\033[?1049l'
+	stty echo
+}
+
+event_queue() {
+	xprop -root -notype -spy \
+	    32c '=$0\n' _NET_CURRENT_DESKTOP \
+	    32x '=$0\n' _NET_ACTIVE_WINDOW \
+	    32x '=$0+\n' _NET_CLIENT_LIST 2>/dev/null &
+	sndioctl -m 2>/dev/null &
+
+	while :; do
+		LC_TIME='C' date "+date=%a %d %b %Y${divider}%H:%M %Z"
+		sleep "$(date '+60 - %S' | bc)"
+	done
+}
+
+get_curr_window() (
+	curr_window="$(xprop -root -notype \
+	    32x '=$0\n' _NET_ACTIVE_WINDOW 2>/dev/null || :)"
+	curr_window="${curr_window#*=}"
+	printf '%s\n' "${curr_window:-0x0}"
+)
+
+get_curr_group() (
+	curr_window="${1:-0x0}"
+
+	if [ "${curr_window}" != '0x0' ]; then
+		curr_group="$(xprop -id "${curr_window}" -notype \
+		    32c '=$0\n' _NET_WM_DESKTOP 2>/dev/null || :)"
+		curr_group="${curr_group#*=}"
+
+		case "${curr_group}" in
+			[1-9])
+				printf '%s\n' "${curr_group}"
+				return 0
+				;;
+		esac
+	fi
+
+	curr_group="$(xprop -root -notype \
+	    32c '=$0\n' _NET_CURRENT_DESKTOP 2>/dev/null || :)"
+	curr_group="${curr_group#*=}"
+
+	case "${curr_group}" in
+		[1-9])
+			printf '%s\n' "${curr_group}"
+			;;
+		*)
+			printf '0\n'
+			;;
+	esac
+)
+
+get_curr_group_list() (
+	curr_window_list="$1"
+	curr_group_list=''
+
+	while IFS='' read -r window; do
+		[ "${window:-0x0}" != '0x0' ] || continue
+		group="$(xprop -id "${window}" -notype \
+		    32c '=$0\n' _NET_WM_DESKTOP 2>/dev/null || :)"
+		group="${group#*=}"
+
+		case "${group}" in
+			[1-9])
+				;;
+			*)
+				continue
+				;;
+		esac
+
+		case "${curr_group_list}" in
+			*"${group}"*)
+				continue
+				;;
+		esac
+
+		curr_group_list="${curr_group_list}${group}"
+	done <<-EOF
+	$(printf '%s\n' "${curr_window_list}" | awk '
+	{
+		gsub(/,[\t ]*/, "\n", $0);
+		printf("%s\n", $0);
+	}')
+	EOF
+
+	printf '%s\n' "${curr_group_list}"
+)
+
+get_app_name() {
+	window="${1:-0x0}"
+	[ "${window}" != '0x0' ] || return 0
+	pid="$(xprop -id "${window}" -notype \
+	    32c '=$0\n' _NET_WM_PID 2>/dev/null || :)"
+	pid="${pid#*=}"
+	[ -n "${pid}" ] || return 0
+	exec_name="$(ps -o 'comm=' -p "${pid}" 2>/dev/null || :)"
+
+	case "${exec_name}" in
+		''|*[!\ -~]*|*'/'*)
+			return 0
+			;;
+	esac
+
+	while IFS='' read -r line; do
+		case "${line}" in
+			"${exec_name}/"*)
+				printf '%s\n' "${line#*/}"
+				return 0
+				;;
+		esac
+	done <<-EOF
+	${app_name_cache}
+	EOF
+
+	class_name="$(xprop -id "${window}" -notype \
+	    8s '=$1\n' WM_CLASS 2>/dev/null || :)"
+
+	case "${class_name}" in
+		''|*[!\ -~]*)
+			class_name="${exec_name}"
+			;;
+		'WM_CLASS="'*'"')
+			class_name="${class_name#*\"}"
+			class_name="${class_name%\"}"
+			;;
+		*)
+			class_name="${exec_name}"
+			;;
+	esac
+
+	while IFS='' read -r file; do
+		[ -f "${file}" ] || continue
+
+		app_name="$(awk '
+		BEGIN {
+			desktop_entry = 0;
+		}
+
+		$0 ~ /^[\t ]*\[.*\][\t ]*$/ {
+			if ($0 ~ /^[\t ]*\[Desktop Entry\][\t ]*$/) {
+				desktop_entry = 1;
+			} else {
+				desktop_entry = 0;
+			}
+
+			next;
+		}
+
+		desktop_entry != 0 && $0 ~ /^[\t ]*Name[\t ]*=/ {
+			sub(/^[\t ]*Name[\t ]*=[\t ]*/, "", $0);
+			sub(/[\t ]*$/, "", $0);
+
+			if ($0 ~ /^[ -~]+$/) {
+				printf("%s\n", $0);
+			}
+
+			exit 0;
+		}' "${file}" 2>/dev/null || :)"
+
+		if [ -n "${app_name}" ]; then
+			app_name_cache="$(printf '%s/%s\n%s' \
+			    "${exec_name}" \
+			    "${app_name}" \
+			    "${app_name_cache}" | sort -u)"
+			printf '%s\n' "${app_name}"
+			return 0
+		fi
+	done <<-EOF
+	$(printf '%s\n' "${XDG_DATA_DIRS:-/usr/local/share:/usr/share}" \
+	    | tr ':' '\n' \
+	    | sed 's/$/\/applications/' \
+	    | xargs -I '{}' find '{}' ! -path "$(printf '*\n*')" \
+	    -a -type f \
+	    -a -perm -0400 \
+	    -a '(' \
+	       -iname "${class_name}.desktop" \
+	    -o -iname "org.*.${class_name}.desktop" \
+	    -o -iname "${exec_name}.desktop" \
+	    -o -iname "org.*.${exec_name}.desktop" \
+	       ')' 2>/dev/null)
+	EOF
+
+	app_name_cache="$(printf '%s/%s\n%s' \
+	    "${exec_name}" \
+	    "${class_name}" \
+	    "${app_name_cache}" | sort -u)"
+	printf '%s\n' "${class_name}"
+}
+
+get_term_width() {
+	cols="$(stty size </dev/tty 2>/dev/null || :)"
+	cols="${cols##* }"
+
+	case "${cols}" in
+		''|*[!0-9]*)
+			;;
+		*)
+			printf '%s\n' "${cols}"
+			return 0
+			;;
+	esac
+
+	cols="$(tput columns </dev/tty 2>/dev/null || :)"
+
+	case "${cols}" in
+		''|*[!0-9]*)
+			printf '80\n'
+			;;
+		*)
+			printf '%s\n' "${cols}"
+			;;
+	esac
+}
+
+draw_group_list() (
+	curr_group="$1"
+	curr_group_list="$2"
+
+	for group in 1 2 3 4 5 6 7 8 9; do
+		case "${curr_group_list}" in
+			*"${group}"*)
+				prefix=\'
+				;;
+			*)
+				prefix=' '
+				;;
+		esac
+
+		if [ "${group}" = "${curr_group}" ]; then
+			printf '\033[1;7m%s%s \033[0m' "${prefix}" "${group}"
+		else
+			printf '%s%s ' "${prefix}" "${group}"
+		fi
+	done
+
+	printf '\n'
+)
+
+draw_vol() (
+	output_level="$1"
+	output_mute="$2"
+
+	awk -v level="${output_level}" -v mute="${output_mute}" '
+	BEGIN {
+		sub(/[\t ]*(#.*)?$/, "", mute);
+
+		if (mute == "1") {
+			printf("Vol: Mute\n");
+			exit 0;
+		}
+
+		if (mute == "0") {
+			sub(/[\t ]*(#.*)?$/, "", level);
+
+			if (level ~ /^(0+(\.[0-9]*)?|\.[0-9]+|0*1(\.0*)?)$/) {
+				printf("Vol: %.0f%%\n", level * 100);
+				exit 0;
+			}
+		}
+
+		printf("Vol: Unknown\n");
+		exit 0;
+	}'
+)
+
+trap 'term_restore; trap - EXIT' EXIT
+term_setup
+curr_window=''
+curr_window_list=''
+curr_group=''
+curr_group_list=''
+group_list=''
+app_name=''
+output_level=''
+output_mute=''
+vol=''
+date=''
+
+event_queue | while IFS='' read -r event; do
+	case "${event}" in
+		'_NET_CURRENT_DESKTOP='*)
+			event_val="${event#*=}"
+			[ "${event_val}" != "${curr_group}" ] || continue
+			curr_group="${event_val}"
+			group_list="$(draw_group_list \
+			    "${curr_group}" \
+			    "${curr_group_list}")"
+			;;
+		'_NET_ACTIVE_WINDOW='*)
+			event_val="${event#*=}"
+			[ "${event_val}" != "${curr_window}" ] || continue
+			curr_window="${event_val}"
+			curr_group_list="$(get_curr_group_list \
+			    "${curr_window_list}")"
+			group_list="$(draw_group_list \
+			    "${curr_group}" \
+			    "${curr_group_list}")"
+			app_name="$(get_app_name "${curr_window}")"
+			;;
+		'_NET_CLIENT_LIST='*)
+			curr_window_list="${event#*=}"
+			curr_window="$(get_curr_window)"
+			curr_group="$(get_curr_group "${curr_window}")"
+			curr_group_list="$(get_curr_group_list \
+			    "${curr_window_list}")"
+			group_list="$(draw_group_list \
+			    "${curr_group}" \
+			    "${curr_group_list}")"
+			app_name="$(get_app_name "${curr_window}")"
+			;;
+		'output[0].level='*)
+			output_level="${event#*=}"
+			[ -n "${output_mute}" ] || continue
+			vol="$(draw_vol "${output_level}" "${output_mute}")"
+			;;
+		'output[0].mute='*)
+			output_mute="${event#*=}"
+			[ -n "${output_level}" ] || continue
+			vol="$(draw_vol "${output_level}" "${output_mute}")"
+			;;
+		'date='*)
+			date="${event#*=}"
+			;;
+		*)
+			continue
+			;;
+	esac
+
+	cols="$(get_term_width)"
+	printf '\033[0;0H'
+
+	if [ "${cols}" -lt "${group_list_width}" ]; then
+		[ "${cols}" -lt 1 ] || printf '\033[0K'
+		continue
+	fi
+
+	cols="$((cols - group_list_width))"
+	printf "%-${group_list_width}s" "${group_list}"
+
+	if [ -n "${vol}" ] && [ -n "${date}" ]; then
+		status="${vol}${divider}${date}"
+	else
+		status="${vol}${date}"
+	fi
+
+	if [ "${cols}" -le "${#status}" ]; then
+		[ "${cols}" -lt 1 ] || printf '\033[0K'
+		continue
+	fi
+
+	cols="$((cols - ${#status} - 1))"
+
+	if [ -n "${app_name#XTermBar}" ]; then
+		if [ "${cols}" -gt "${#app_name}" ]; then
+			printf ' %s' "${app_name}"
+			cols="$((cols - ${#app_name} - 1))"
+		elif [ "${cols}" -gt 4 ]; then
+			printf " %.$((cols - 4))s..." "${app_name}"
+			cols=0
+		elif [ "${cols}" -gt 3 ]; then
+			printf " %.$((cols - 3))s.." "${app_name}"
+			cols=0
+		elif [ "${cols}" -gt 2 ]; then
+			printf " %.$((cols - 2))s." "${app_name}"
+			cols=0
+		elif [ "${cols}" -gt 1 ]; then
+			printf " %.$((cols - 1))s" "${app_name}"
+			cols=0
+		fi
+	fi
+
+	printf "%-${cols}s %s" '' "${status}"
+done

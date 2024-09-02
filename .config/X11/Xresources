@@ -1,0 +1,63 @@
+!
+! Xresources
+!
+
+! Xft font rendering configuration:
+Xft.dpi: 192
+Xft.antialias: 1
+Xft.hinting: 0
+Xft.autohint: 0
+Xft.hintstyle: hintnone
+Xft.rgba: rgb
+Xft.lcdfilter: lcddefault
+
+! Xcursor configuration:
+Xcursor.theme: Adwaita
+Xcursor.size: 48
+
+! Default terminal colour scheme:
+*.background: #202020
+*.foreground: #FFFFFF
+*.cursorColor: #FFFFFF
+*.color0: #181818
+*.color1: #FF88A0
+*.color2: #A0E080
+*.color3: #FFD070
+*.color4: #90C8FF
+*.color5: #C0B0FF
+*.color6: #90E8C8
+*.color7: #B0B0B0
+*.color8: #404040
+*.color9: #FF88A0
+*.color10: #A0E080
+*.color11: #FFD070
+*.color12: #90C8FF
+*.color13: #C0B0FF
+*.color14: #90E8C8
+*.color15: #FFFFFF
+
+! XTerm configuration:
+XTerm*termName: xterm-256color
+XTerm*faceName: Fira Mono:medium:pixelsize=26
+XTerm*internalBorder: 14
+XTerm*bufferedFPS: 60
+XTerm*scrollBar: false
+XTerm*selectToClipboard: true
+XTerm*eightBitInput: true
+XTerm*utf8: 2
+XTerm*metaSendsEscape: true
+
+! XTermBar configuration:
+XTermBar*termName: xterm-256color
+XTermBar*faceName: Fira Mono:medium:pixelsize=26
+XTermBar*internalBorder: 16
+XTermBar*bufferedFPS: 60
+XTermBar*scrollBar: false
+XTermBar*selectToClipboard: false
+XTermBar*saveLines: 0
+XTermBar*eightBitInput: true
+XTermBar*utf8: 2
+XTermBar*metaSendsEscape: true
+XTermBar*background: #000000
+XTermBar*foreground: #FFFFFF
+XTermBar*cursorColor: #FFFFFF

@@ -1,0 +1,94 @@
+#!/bin/sh
+#
+# aliases
+#
+# Initialise shell aliases.
+#
+
+# Set up aliases for changing the current working directory.
+alias   ..='cd ..'
+alias  ...='cd ../..'
+alias ....='cd ../../..'
+alias   dt='cd "${HOME}/Desktop"'
+alias  doc='cd "${HOME}/Documents"'
+alias   dl='cd "${HOME}/Downloads"'
+alias  mus='cd "${HOME}/Music"'
+alias  pic='cd "${HOME}/Pictures"'
+alias  pro='cd "${HOME}/Projects"'
+alias  pub='cd "${HOME}/Public"'
+alias tmpl='cd "${HOME}/Templates"'
+alias  vid='cd "${HOME}/Videos"'
+alias  dot='cd "${DOTFILES_DIR:-"${HOME}/Projects/dotfiles"}"'
+alias  bin='cd "${DOTFILES_DIR:-"${HOME}/Projects/dotfiles"}/.local/bin"'
+
+# Set up aliases for listing the contents of the current working directory.
+if command ls --color='auto' /dev/null >/dev/null 2>&1; then
+	alias ls='LC_ALL='\''C'\'' ls --color='\''auto'\'''
+	alias la='ls -A'
+	alias ll='ls -AFhl'
+
+	if [ "${PAGER-}" = 'less' ]; then
+		alias lm='ls -AFhl --color='\''always'\'' | less -RSX'
+	else
+		alias lm='ls -AFhl | "${PAGER:-more}"'
+	fi
+elif command ls -G /dev/null >/dev/null 2>&1; then
+	alias ls='LC_ALL='\''C'\'' ls -G'
+	alias la='ls -A'
+	alias ll='ls -AFhl'
+
+	if [ "${PAGER-}" = 'less' ]; then
+		alias lm='CLICOLOR_FORCE='\'\'' ls -AFhl | less -RSX'
+	else
+		alias lm='ls -AFhl | "${PAGER:-more}"'
+	fi
+else
+	alias ls='LC_ALL='\''C'\'' ls'
+	alias la='ls -A'
+	alias ll='ls -AFl'
+	alias lm='ls -AFl | "${PAGER:-more}"'
+fi
+
+# Set an alias to run the dotfiles setup script.
+if [ -f "${DOTFILES_DIR:-"${HOME}/Projects/dotfiles"}/setup.sh" ]; then
+	alias sdf='sh "${DOTFILES_DIR:-"${HOME}/Projects/dotfiles"}/setup.sh"'
+fi
+
+#
+# Set up aliases for specific installed programs.
+#
+
+if command -v bsdunzip >/dev/null; then
+	alias unzip='bsdunzip'
+fi
+
+if command -v cal >/dev/null; then
+	alias cal='cal -m'
+fi
+
+if command -v tmux >/dev/null; then
+	alias ta='tmux attach 2>/dev/null || tmux new-session -As Main'
+fi
+
+if command -v xclip >/dev/null; then
+	alias xci='xclip -i -selection clipboard'
+	alias xco='xclip -o -selection clipboard'
+fi
+
+# Set up aliases for specific operating systems.
+case "$(uname -s)" in
+	'OpenBSD')
+		alias synctime='doas rdate -cnv pool.ntp.org'
+		alias netstart='doas sh /etc/netstart'
+		alias    mount='doas mount'
+		alias   umount='doas umount'
+		alias     halt='doas halt'
+		alias   reboot='doas reboot'
+		alias shutdown='doas shutdown'
+		alias poweroff='doas shutdown -p now'
+
+		if command -v lsfs >/dev/null; then
+			alias lsfs='doas "${HOME}/.local/bin/lsfs"'
+		fi
+		;;
+esac

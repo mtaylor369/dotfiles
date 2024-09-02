@@ -1,0 +1,102 @@
+#!/bin/sh
+#
+# xscreenshot
+#
+# Take a screen shot of the current X display output using ffmpeg(1).
+#
+# Usage: xscreenshot [-d seconds] [file]
+#
+set -eu
+umask 022
+
+error_msg() {
+	printf '%s: %s\n' "${0##*/}" "$*" >&2
+}
+
+usage() {
+	cat >&2 <<-EOF
+	usage: ${0##*/} [-d seconds] [file]
+	EOF
+}
+
+delay=0
+
+while getopts ':d:' opt; do
+	case "${opt}" in
+		'd')
+			delay="${OPTARG}"
+			;;
+		':')
+			error_msg "option requires an argument -- ${OPTARG}"
+			usage
+			exit 1
+			;;
+		*)
+			error_msg "unknown option -- ${OPTARG}"
+			usage
+			exit 1
+			;;
+	esac
+done
+
+shift "$((OPTIND - 1))"
+
+if [ "$#" -gt 1 ]; then
+	usage
+	exit 1
+fi
+
+file="${1-}"
+
+if [ -z "${DISPLAY-}" ]; then
+	error_msg "environment variable DISPLAY is empty or unset"
+	exit 1
+fi
+
+display_size="$(xrandr --display "${DISPLAY}" --current | awk '
+{
+	if (NR == 1 && match($0, /current [0-9]+ x [0-9]+/) > 0) {
+		str = substr($0, RSTART + 8, RLENGTH - 8);
+		gsub(/ /, "", str);
+		printf("%s\n", str);
+	}
+}')"
+
+if [ -z "${display_size}" ]; then
+	error_msg 'failed to get the current display size'
+	exit 1
+fi
+
+case "${delay}" in
+	*[!0-9]*)
+		error_msg "${delay}: invalid delay value"
+		exit 1
+		;;
+	*)
+		sleep "${delay}"
+		;;
+esac
+
+case "${file}" in
+	'')
+		user_dirs="${XDG_CONFIG_HOME:-"${HOME}/.config"}/user-dirs.dirs"
+		[ ! -f "${user_dirs}" ] || . "${user_dirs}" 2>/dev/null || :
+		dir="${XDG_PICTURES_DIR:-"${HOME}/Pictures"}/Screenshots"
+		mkdir -p "${dir}"
+		file="${dir}/$(date '+%Y-%m-%dT%H%M%S')_${display_size}.png"
+		;;
+	*'.'[Pp][Nn][Gg])
+		;;
+	*)
+		file="${file}.png"
+		;;
+esac
+
+ffmpeg \
+    -f x11grab \
+    -i "${DISPLAY}" \
+    -video_size "${display_size}" \
+    -codec:v png \
+    -frames:v 1 \
+    -loglevel error \
+    "${file}"

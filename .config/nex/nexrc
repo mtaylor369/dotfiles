@@ -1,0 +1,25 @@
+"
+" nexrc
+"
+
+" Editor options:
+set extended
+set autoindent
+set leftright
+set ruler
+set showfilename
+set showmode
+set cedit=\	
+set filec=\	
+
+" Key mappings:
+map gg 1G
+map zt z
+map zz z.
+map zb z-
+map gs !'msort -u
+map gx !'mtmux load-buffer -
+map gy !'mtmux load-buffer -u
+map gp :r!tmux show-buffer
+map ZZ :x
+map ZQ :q!

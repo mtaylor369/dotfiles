@@ -1,0 +1,49 @@
+#!/bin/sh
+#
+# tmux
+#
+# Launch tmux(1) first looking for a configuration file in XDG_CONFIG_HOME.
+#
+# Usage: tmux [argument ...]
+#
+set -eu
+
+error_msg() {
+	printf '%s: %s\n' "${0##*/}" "$*" >&2
+}
+
+find_path() (
+	exec_name="$1"
+
+	while IFS='' read -r dir; do
+		case "${dir}" in
+			''|"${HOME}/.local/bin")
+				continue
+				;;
+		esac
+
+		file="${dir}/${exec_name}"
+
+		if [ -f "${file}" ] && [ -x "${file}" ]; then
+			printf '%s\n' "${file}"
+			return 0
+		fi
+	done <<-EOF
+	$(printf '%s\n' "${PATH-}" | tr ':' '\n')
+	EOF
+
+	return 1
+)
+
+if ! exec_path="$(find_path tmux)"; then
+	error_msg 'tmux: command not found'
+	exit 1
+fi
+
+config_path="${XDG_CONFIG_HOME:-"${HOME}/.config"}/tmux/tmux.conf"
+
+if [ "${config_path}" ]; then
+	"${exec_path}" -f "${config_path}" "$@"
+else
+	"${exec_path}" "$@"
+fi

@@ -1,0 +1,23 @@
+#!/bin/sh
+#
+# launcher
+#
+# Command-line application launcher.
+#
+# Usage: launcher [menu_program [argument ...]]
+#
+set -eu
+[ "$#" -gt 0 ] || set -- clmenu
+cmd="$(printf '%s\n' "${PATH-}" \
+    | tr ':' '\n' \
+    | xargs -I '{}' find -L '{}' ! -path "$(printf '*\n*')" \
+    -a -type f \
+    -a -perm -0100 2>/dev/null \
+    | sed 's/^.*\///' \
+    | sort -u \
+    | "$@")"
+
+if [ -n "${cmd}" ]; then
+	set -m
+	printf '%s\n' "${cmd}" | "${SHELL:-/bin/sh}" &
+fi

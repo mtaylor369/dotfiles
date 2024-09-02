@@ -1,0 +1,78 @@
+#!/bin/sh
+#
+# shrc
+#
+# Initialise an interactive shell.
+#
+
+# Make sure the following environment variables are set.
+: "${XDG_CONFIG_HOME:="${HOME}/.config"}"
+: "${XDG_STATE_HOME:="${HOME}/.local/state"}"
+
+# Get the current shell's process name.
+shell_name="$(ps -o 'comm=' -p "$$")"
+
+case "${shell_name}" in
+	'bash')
+		if [ -f "${HOME}/.bashrc" ]; then
+			. "${HOME}/.bashrc"
+			unset shell_name
+			return 0
+		fi
+		;;
+	'ksh')
+		if [ -f "${XDG_CONFIG_HOME}/ksh/kshrc" ]; then
+			. "${XDG_CONFIG_HOME}/ksh/kshrc"
+			unset shell_name
+			return 0
+		fi
+		;;
+esac
+
+# Set up the history file.
+HISTFILE="${XDG_STATE_HOME}/${shell_name:-sh}/history"
+(umask 022 && mkdir -p "${HISTFILE%/*}")
+HISTSIZE=250000
+unset shell_name
+
+# Set up the PS1 prompt.
+prompt() (
+	user="$(id -un)"
+	hostname="$(uname -n)"
+	hostname="${hostname%%.*}"
+	working_dir="$(pwd)"
+
+	case "${working_dir}" in
+		"${HOME}"*)
+			working_dir="~${working_dir#"${HOME}"}"
+			;;
+	esac
+
+	if [ "${user}" != 'root' ]; then
+		prompt_char='$'
+	else
+		prompt_char='#'
+	fi
+
+	case "${TERM-}" in
+		'xterm-color'|*'-256color')
+			printf '\033[1;32m%s\033[0m:\033[1;34m%s\033[0m\n%s ' \
+			    "${user}@${hostname}" \
+			    "${working_dir}" \
+			    "${prompt_char}"
+			;;
+		*)
+			printf '%s:%s\n%s ' \
+			    "${user}@${hostname}" \
+			    "${working_dir}" \
+			    "${prompt_char}"
+			;;
+	esac
+)
+
+PS1='$(prompt)'
+
+# Source the shell aliases script.
+if [ -f "${XDG_CONFIG_HOME}/sh/aliases" ]; then
+	. "${XDG_CONFIG_HOME}/sh/aliases"
+fi

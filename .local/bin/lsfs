@@ -1,0 +1,126 @@
+#!/bin/sh
+#
+# lsfs
+#
+# List all the partitions and mount points for each connected disk on OpenBSD.
+#
+# Usage: lsfs
+#
+set -eu
+
+error_msg() {
+	printf '%s: %s\n' "${0##*/}" "$*" >&2
+}
+
+if [ "$(uname -s)" != 'OpenBSD' ]; then
+	error_msg 'this script must be run on OpenBSD'
+	exit 1
+fi
+
+if [ "$(id -u)" != '0' ]; then
+	error_msg 'this script must be run as root'
+	exit 1
+fi
+
+str="$(printf '\n\t')"
+readonly lf="${str%?}"
+readonly ht="${str#?}"
+mounted_file_systems="$(df -P | awk 'NR > 1 { printf("%s\t%s\n", $1, $6); }')"
+readonly mounted_file_systems
+readonly col_1_header='Filesystem'
+readonly col_2_header='Label'
+readonly col_3_header='Type'
+readonly col_4_header='Size'
+readonly col_5_header='Mounted on'
+col_1_width="${#col_1_header}"
+col_2_width="${#col_2_header}"
+col_3_width="${#col_3_header}"
+col_4_width="${#col_4_header}"
+table_data=''
+
+while IFS='' read -r disk; do
+	[ -n "${disk}" ] || continue
+	disklabel_output="$(disklabel -hp g "${disk}")"
+
+	while IFS="${ht}" read -r file_system label type size; do
+		[ -n "${file_system}" ] || continue
+		[ "${col_1_width}" -ge "${#file_system}" ] \
+		    || col_1_width="${#file_system}"
+		[ "${col_2_width}" -ge "${#label}" ] \
+		    || col_2_width="${#label}"
+		[ "${col_3_width}" -ge "${#type}" ] \
+		    || col_3_width="${#type}"
+		[ "${col_4_width}" -ge "${#size}" ] \
+		    || col_4_width="${#size}"
+
+		mounted_on="$(printf '%s\n' "${mounted_file_systems}" \
+		    | awk -F "${ht}" -v file_system="${file_system}" '
+		$1 == file_system {
+			printf("%s\n", $2);
+			exit 0;
+		}')"
+
+		table_data="${table_data:+"${table_data}${lf}"}${file_system}"
+		table_data="${table_data}${ht}${label}"
+		table_data="${table_data}${ht}${type}"
+		table_data="${table_data}${ht}${size}"
+		table_data="${table_data}${ht}${mounted_on}"
+	done <<-EOF
+	$(printf '%s\n' "${disklabel_output}" | awk -v disk="${disk}" '
+	BEGIN {
+		label = "";
+		parse_partitions = 0;
+	}
+
+	$0 ~ /^label:/ {
+		sub(/^label:[\t ]*/, "", $0);
+		sub(/[\t ]*$/, "", $0);
+		label = $0;
+		next;
+	}
+
+	$0 ~ /^16 partitions:/ {
+		parse_partitions = 1;
+		next;
+	}
+
+	parse_partitions == 1 && $0 !~ /^[\t ]*#/ {
+		letter = $1;
+		sub(/:$/, "", letter);
+
+		if (letter == "c") {
+			next;
+		}
+
+		printf("/dev/%s%s\t%s\t%s\t%s\n", disk, letter, label, $4, $2);
+	}')
+	EOF
+done <<-EOF
+$(sysctl -n hw.disknames | awk -F ',' '
+{
+	for (i = 0; i < NF;) {
+		sub(/:.*$/, "", $++i);
+		printf("%s\n", $i);
+	}
+}')
+EOF
+
+buf=''
+buf="$(printf "%s%-${col_1_width}s  " "${buf}" "${col_1_header}")"
+buf="$(printf "%s%-${col_2_width}s  " "${buf}" "${col_2_header}")"
+buf="$(printf "%s%-${col_3_width}s  " "${buf}" "${col_3_header}")"
+buf="$(printf "%s%-${col_4_width}s  " "${buf}" "${col_4_header}")"
+buf="${buf}${col_5_header}${lf}"
+
+while IFS="${ht}" read -r file_system label type size mounted_on; do
+	[ -n "${file_system}" ] || continue
+	buf="$(printf "%s%-${col_1_width}s  " "${buf}" "${file_system}")"
+	buf="$(printf "%s%-${col_2_width}s  " "${buf}" "${label}")"
+	buf="$(printf "%s%-${col_3_width}s  " "${buf}" "${type}")"
+	buf="$(printf "%s%-${col_4_width}s  " "${buf}" "${size}")"
+	buf="${buf}${mounted_on}${lf}"
+done <<-EOF
+${table_data}
+EOF
+
+printf '%s' "${buf}"

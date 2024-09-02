@@ -1,0 +1,58 @@
+#!/bin/sh
+#
+# lmms
+#
+# Launch lmms(1) first looking for a configuration file in XDG_CONFIG_HOME.
+#
+# Usage: lmms [argument ...]
+#
+set -eu
+
+error_msg() {
+	printf '%s: %s\n' "${0##*/}" "$*" >&2
+}
+
+find_path() (
+	exec_name="$1"
+
+	while IFS='' read -r dir; do
+		case "${dir}" in
+			''|"${HOME}/.local/bin")
+				continue
+				;;
+		esac
+
+		file="${dir}/${exec_name}"
+
+		if [ -f "${file}" ] && [ -x "${file}" ]; then
+			printf '%s\n' "${file}"
+			return 0
+		fi
+	done <<-EOF
+	$(printf '%s\n' "${PATH-}" | tr ':' '\n')
+	EOF
+
+	return 1
+)
+
+if ! exec_path="$(find_path lmms)"; then
+	error_msg 'lmms: command not found'
+	exit 1
+fi
+
+if [ "$(uname -s)" = 'OpenBSD' ]; then
+	if usbdevs 2>/dev/null \
+	    | grep -Eq 'M-Audio, Keystation Mini 32 MK3'; then
+		midicat -q 'midi/0' -q 'midithru/0' &
+		midicat_pid="$!"
+		trap 'kill -TERM "${midicat_pid}"; trap - EXIT' EXIT
+	fi
+fi
+
+config_path="${XDG_CONFIG_HOME:-"${HOME}/.config"}/lmms/lmmsrc.xml"
+
+if [ "${config_path}" ]; then
+	"${exec_path}" -c "${config_path}" "$@"
+else
+	"${exec_path}" "$@"
+fi

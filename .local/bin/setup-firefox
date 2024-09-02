@@ -1,0 +1,341 @@
+#!/bin/sh
+#
+# setup-firefox
+#
+# Personal script to set up Mozilla Firefox 128 for the current user.
+#
+# Usage: setup-firefox [-p profile]
+#
+set -eu
+umask 022
+
+error_msg() {
+	printf '%s: %s\n' "${0##*/}" "$*" >&2
+}
+
+usage() {
+	cat >&2 <<-EOF
+	usage: ${0##*/} [-p profile]
+	EOF
+}
+
+msg() {
+	printf '==> %s\n' "$*" >&2
+}
+
+create_file() (
+	mode="$1"
+	file="$2"
+
+	if [ -e "${file}" ]; then
+		if [ ! -f "${file}" ]; then
+			error_msg "cannot update ${file}:" \
+			    'existing path is not a regular file'
+			exit 1
+		fi
+
+		str='update:Updated'
+	else
+		file_dir="$(dirname "${file}")"
+		mkdir -p "${file_dir}"
+		str='create:Created'
+	fi
+
+	if command -v mktemp >/dev/null; then
+		tmp_file="$(mktemp -t "${file##*/}.XXXXXXXX")"
+	else
+		tmp_file="$(printf 'mkstemp(%s)\n' \
+		    "${TMPDIR:-/tmp}/${file##*/}.XXXXXXXX" | m4)"
+
+		if [ ! -f "${tmp_file}" ]; then
+			error_msg 'failed to create temporary file'
+			exit 1
+		fi
+	fi
+
+	trap 'rm "${tmp_file}"; trap - EXIT' EXIT
+	cat >"${tmp_file}"
+
+	if ! grep -qvx '' "${tmp_file}"; then
+		error_msg "cannot ${str%%:*} ${file}: file content was empty"
+		exit 1
+	fi
+
+	chmod "${mode}" "${tmp_file}"
+	mv "${tmp_file}" "${file}"
+	trap - EXIT
+	printf '%s: %s\n' "${str##*:}" "${file}" >&2
+)
+
+profile='default-default'
+
+while getopts ':p:' opt; do
+	case "${opt}" in
+		'p')
+			profile="${OPTARG}"
+			;;
+		':')
+			error_msg "option requires an argument -- ${OPTARG}"
+			usage
+			exit 1
+			;;
+		*)
+			error_msg "unknown option -- ${OPTARG}"
+			usage
+			exit 1
+			;;
+	esac
+done
+
+shift "$((OPTIND - 1))"
+
+if [ "$#" -gt 0 ]; then
+	usage
+	exit 1
+fi
+
+profiles_ini_file="${HOME}/.mozilla/firefox/profiles.ini"
+
+if [ ! -f "${profiles_ini_file}" ]; then
+	firefox --headless >/dev/null 2>&1 &
+	pid="$!"
+	sleep 1
+	kill -TERM "${pid}"
+
+	if [ ! -f "${profiles_ini_file}" ]; then
+		error_msg "${profiles_ini_file}: no such regular file exists"
+		exit 1
+	fi
+fi
+
+msg "Setting up profile ${profile}..."
+
+profile_dir="$(awk -v profile="${profile}" -v home="${HOME}" '
+BEGIN {
+	name = "";
+	path = "";
+	is_relative = "";
+	parse_line = 0;
+}
+
+$0 ~ /^[\t ]*\[.*\][\t ]*$/ {
+	if (name == profile && path != "" && is_relative != "") {
+		exit 0;
+	}
+
+	name = "";
+	path = "";
+	is_relative = "";
+	parse_line = 1;
+}
+
+parse_line != 0 {
+	if (name == "" && $0 ~ /^[\t ]*Name[\t ]*=/) {
+		sub(/^[\t ]*Name[\t ]*=[\t ]*/, "", $0);
+		sub(/[\t ]*$/, "", $0);
+		name = $0;
+		next;
+	}
+
+	if (path == "" && $0 ~ /^[\t ]*Path[\t ]*=/) {
+		sub(/^[\t ]*Path[\t ]*=[\t ]*/, "", $0);
+		sub(/[\t ]*$/, "", $0);
+		path = $0;
+		next;
+	}
+
+	if (is_relative == "" && $0 ~ /^[\t ]*IsRelative[\t ]*=/) {
+		sub(/^[\t ]*IsRelative[\t ]*=[\t ]*/, "", $0);
+		sub(/[\t ]*$/, "", $0);
+		is_relative = ($0 ~ /^[01]$/) ? $0 : "";
+		next;
+	}
+}
+
+END {
+	if (name == profile && path != "" && is_relative != "") {
+		if (is_relative == "1") {
+			printf("%s/.mozilla/firefox/%s\n", home, path);
+		} else {
+			printf("%s\n", path);
+		}
+	}
+}' "${profiles_ini_file}")"
+
+if [ -z "${profile_dir}" ]; then
+	error_msg "${profile}: no such profile exists"
+	exit 1
+fi
+
+create_file 0644 "${profile_dir}/user.js" <<EOF
+/*
+ * General Settings
+ */
+
+/* Startup */
+user_pref("browser.startup.page", 0);
+user_pref("browser.shell.checkDefaultBrowser", false);
+
+/* Language */
+user_pref("intl.regional_prefs.use_os_locales", true);
+
+/* Downloads */
+user_pref("browser.download.dir", "${HOME}/Downloads");
+user_pref("browser.download.folderList", 2);
+user_pref("browser.download.useDownloadDir", true);
+user_pref("browser.download.always_ask_before_handling_new_types", false);
+
+/* Browsing */
+user_pref("browser.newtabpage.activity-stream.asrouter.userprefs.cfr.addons", false);
+user_pref("browser.newtabpage.activity-stream.asrouter.userprefs.cfr.features", false);
+
+/*
+ * Home Settings
+ */
+
+/* New Windows and Tabs */
+user_pref("browser.startup.homepage", "about:blank");
+user_pref("browser.newtabpage.enabled", false);
+
+/* Firefox Home Content */
+user_pref("browser.newtabpage.activity-stream.showSearch", false);
+user_pref("browser.newtabpage.activity-stream.feeds.topsites", false);
+user_pref("browser.newtabpage.activity-stream.showSponsoredTopSites", false);
+user_pref("browser.newtabpage.activity-stream.feeds.section.topstories", false);
+user_pref("browser.newtabpage.activity-stream.showSponsored", false);
+user_pref("browser.newtabpage.activity-stream.feeds.section.highlights", false);
+user_pref("browser.newtabpage.activity-stream.section.highlights.includeVisited", false);
+user_pref("browser.newtabpage.activity-stream.section.highlights.includeBookmarks", false);
+user_pref("browser.newtabpage.activity-stream.section.highlights.includeDownloads", false);
+user_pref("browser.newtabpage.activity-stream.default.sites", "");
+user_pref("browser.newtabpage.activity-stream.feeds.telemetry", false);
+user_pref("browser.newtabpage.activity-stream.telemetry", false);
+
+/*
+ * Search Settings
+ */
+
+/* Search Suggestions */
+user_pref("browser.search.suggest.enabled", false);
+user_pref("browser.urlbar.showSearchSuggestionsFirst", false);
+user_pref("browser.search.suggest.enabled.private", false);
+
+/* Address Bar */
+user_pref("browser.urlbar.suggest.history", false);
+user_pref("browser.urlbar.suggest.bookmark", true);
+user_pref("browser.urlbar.suggest.clipboard", false);
+user_pref("browser.urlbar.suggest.openpage", false);
+user_pref("browser.urlbar.suggest.topsites", false);
+user_pref("browser.urlbar.suggest.engines", false);
+
+/*
+ * Privacy & Security Settings
+ */
+
+/* Enhanced Tracking Protection */
+user_pref("browser.contentblocking.category", "strict");
+user_pref("network.http.referer.disallowCrossSiteRelaxingDefault.top_navigation", true);
+user_pref("privacy.annotate_channels.strict_list.enabled", true);
+user_pref("privacy.fingerprintingProtection", true);
+user_pref("privacy.query_stripping.enabled", true);
+user_pref("privacy.query_stripping.enabled.pbmode", true);
+user_pref("privacy.trackingprotection.enabled", true);
+user_pref("privacy.trackingprotection.emailtracking.enabled", true);
+user_pref("privacy.trackingprotection.socialtracking.enabled", true);
+
+/* Website Privacy Preferences */
+user_pref("privacy.globalprivacycontrol.enabled", false);
+user_pref("privacy.donottrackheader.enabled", false);
+
+/* Passwords */
+user_pref("signon.rememberSignons", true);
+user_pref("signon.autofillForms", false);
+user_pref("signon.generation.enabled", true);
+user_pref("signon.firefoxRelay.feature", "disabled");
+user_pref("signon.management.page.breach-alerts.enabled", true);
+
+/* Autofill */
+user_pref("extensions.formautofill.creditCards.enabled", false);
+
+/* History */
+user_pref("privacy.history.custom", true);
+user_pref("places.history.enabled", true);
+user_pref("browser.formfill.enable", false);
+user_pref("privacy.sanitize.sanitizeOnShutdown", true);
+user_pref("privacy.clearOnShutdown.history", false);
+user_pref("privacy.clearOnShutdown.downloads", false);
+user_pref("privacy.clearOnShutdown.sessions", true);
+user_pref("privacy.clearOnShutdown.formdata", true);
+user_pref("privacy.clearOnShutdown.cookies", true);
+user_pref("privacy.clearOnShutdown.cache", true);
+user_pref("privacy.clearOnShutdown.siteSettings", false);
+user_pref("privacy.clearOnShutdown.offlineApps", true);
+
+/* Permissions */
+user_pref("media.autoplay.default", 5);
+user_pref("dom.disable_open_during_load", true);
+user_pref("xpinstall.whitelist.required", true);
+
+/* Firefox Data Collection and Use */
+user_pref("browser.discovery.enabled", false);
+user_pref("datareporting.policy.dataSubmissionEnabled", false);
+user_pref("datareporting.healthreport.uploadEnabled", false);
+user_pref("app.shield.optoutstudies.enabled", false);
+user_pref("app.normandy.enabled", false);
+user_pref("app.normandy.api_url", "");
+user_pref("browser.tabs.crashReporting.sendReport", false);
+user_pref("browser.crashReports.unsubmittedCheck.autoSubmit2", false);
+user_pref("breakpad.reportURL", "");
+user_pref("toolkit.telemetry.enabled", false);
+user_pref("toolkit.telemetry.coverage.opt-out", true);
+user_pref("toolkit.coverage.opt-out", true);
+user_pref("toolkit.coverage.endpoint.base", "");
+user_pref("toolkit.telemetry.server", "data:,");
+user_pref("toolkit.telemetry.unified", false);
+user_pref("toolkit.telemetry.archive.enabled", false);
+user_pref("toolkit.telemetry.newProfilePing.enabled", false);
+user_pref("toolkit.telemetry.bhrPing.enabled", false);
+user_pref("toolkit.telemetry.updatePing.enabled", false);
+user_pref("toolkit.telemetry.firstShutdownPing.enabled", false);
+user_pref("toolkit.telemetry.shutdownPingSender.enabled", false);
+user_pref("browser.ping-centre.telemetry", false);
+
+/* Web Site Advertising Preferences */
+user_pref("dom.private-attribution.submission.enabled", false);
+
+/* Security */
+user_pref("browser.safebrowsing.malware.enabled", true);
+user_pref("browser.safebrowsing.downloads.enabled", true);
+user_pref("browser.safebrowsing.downloads.remote.enabled", false);
+user_pref("browser.safebrowsing.downloads.remote.block_potentially_unwanted", true);
+user_pref("browser.safebrowsing.downloads.remote.block_uncommon", true);
+user_pref("security.OCSP.enabled", 1);
+user_pref("dom.security.https_only_mode", true);
+user_pref("dom.security.https_only_mode_ever_enabled", true);
+
+/*
+ * Disable Features
+ */
+
+/* Disable Sync */
+user_pref("identity.fxaccounts.enabled", false);
+
+/* Disable Pocket */
+user_pref("extensions.pocket.enabled", false);
+
+/* Disable More From Mozilla */
+user_pref("browser.preferences.moreFromMozilla", false);
+
+/* Disable Recommendations in Extensions & Themes */
+user_pref("extensions.getAddons.showPane", false);
+user_pref("extensions.htmlaboutaddons.recommendations.enabled", false);
+
+/* Disable Drag Images */
+user_pref("nglayout.enable_drag_images", false);
+EOF
+
+cat >&2 <<EOF
+You still need to manually configure the following:
+  * Change the default search engine
+  * Install and configure uBlock Origin
+EOF
