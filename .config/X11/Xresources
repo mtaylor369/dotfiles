@@ -45,6 +45,7 @@ XTerm*scrollBar: false
 XTerm*selectToClipboard: true
 XTerm*eightBitInput: true
 XTerm*utf8: 2
+XTerm*utf8Fonts: 2
 XTerm*metaSendsEscape: true
 
 ! XTermBar configuration:
@@ -57,6 +58,7 @@ XTermBar*selectToClipboard: false
 XTermBar*saveLines: 0
 XTermBar*eightBitInput: true
 XTermBar*utf8: 2
+XTermBar*utf8Fonts: 2
 XTermBar*metaSendsEscape: true
 XTermBar*background: #000000
 XTermBar*foreground: #FFFFFF
