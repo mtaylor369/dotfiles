@@ -108,7 +108,6 @@ os_name="$(get_os_name)"
 readonly os_name
 
 msg "Setting up ${HOME}..."
-
 . "${DOTFILES_DIR}/.config/user-dirs.dirs"
 mkdir -p "${XDG_DESKTOP_DIR:-"${HOME}/Desktop"}"
 mkdir -p "${XDG_DOCUMENTS_DIR:-"${HOME}/Documents"}"
@@ -154,7 +153,6 @@ case "${os_name}" in
 esac
 
 msg 'Installing dotfiles...'
-
 install_file 0644 .config/user-dirs.dirs
 install_file 0644 .config/user-dirs.locale
 install_file 0755 .local/bin/install-otf-fonts
@@ -166,7 +164,6 @@ install_file 0755 .local/bin/sf
 case "${os_name}" in
 	'OpenBSD')
 		msg 'Installing dotfiles for OpenBSD...'
-
 		install_file 0644 .config/mail/mailrc
 		install_file 0644 .config/nex/nexrc
 		install_file 0755 .local/bin/lsfs
@@ -177,14 +174,12 @@ esac
 
 if command -v bash >/dev/null; then
 	msg 'Installing dotfiles for bash(1)...'
-
 	install_file 0644 .bash_profile
 	install_file 0644 .bashrc
 fi
 
 if command -v cwm >/dev/null; then
 	msg 'Installing dotfiles for cwm(1)...'
-
 	install_file 0644 .config/X11/Xresources
 	install_file 0755 .config/X11/Xsession
 	install_file 0644 .config/cwm/cwmrc
@@ -199,27 +194,23 @@ fi
 
 if command -v firefox >/dev/null; then
 	msg 'Installing dotfiles for firefox(1)...'
-
 	install_file 0755 .local/bin/setup-firefox
 fi
 
 if command -v git >/dev/null \
     && [ -f "${DOTFILES_DIR}/.config/git/config.local" ]; then
 	msg 'Installing dotfiles for git(1)...'
-
 	install_file 0644 .config/git/config
 	install_file 0644 .config/git/config.local
 fi
 
 if command -v krita >/dev/null; then
 	msg 'Installing dotfiles for krita(1)...'
-
 	install_file 0755 .local/bin/krita
 fi
 
 if command -v ksh >/dev/null; then
 	msg 'Installing dotfiles for ksh(1)...'
-
 	install_file 0644 .config/ksh/kshrc
 fi
 
@@ -235,7 +226,6 @@ fi
 
 if command -v mpv >/dev/null; then
 	msg 'Installing dotfiles for mpv(1)...'
-
 	install_file 0644 .config/mpv/mpv.conf
 fi
 
@@ -243,20 +233,17 @@ if command -v sh >/dev/null \
     || command -v bash >/dev/null \
     || command -v ksh >/dev/null; then
 	msg 'Installing dotfiles for sh(1)...'
-
 	install_file 0644 .config/sh/aliases
 	install_file 0644 .config/sh/shrc
 fi
 
 if command -v tmux >/dev/null; then
 	msg 'Installing dotfiles for tmux(1)...'
-
 	install_file 0644 .config/tmux/tmux.conf
 	install_file 0755 .local/bin/tmux
 fi
 
 if command -v vim >/dev/null; then
 	msg 'Installing dotfiles for vim(1)...'
-
 	install_file 0644 .config/vim/vimrc
 fi

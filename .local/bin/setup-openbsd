@@ -223,7 +223,6 @@ if [ -n "${firmware_dir-}" ]; then
 fi
 
 msg 'Setting up the backup directory...'
-
 admin_home_dir="$(get_home_dir "${admin}")"
 readonly admin_home_dir
 
@@ -264,7 +263,7 @@ create_file 0644 /etc/boot.conf <<EOF
 boot
 EOF
 
-# Add the mount option "noatime" to each writable FFS file system in fstab(5).
+# Add the mount option 'noatime' to each writable FFS file system in fstab(5).
 awk '
 {
 	if ($0 !~ /^[\t ]*#/ \
@@ -727,7 +726,6 @@ do_exit
 EOF
 
 msg 'Setting up system daemons...'
-
 rcctl enable apmd ntpd smtpd sndiod sshd xenodm
 
 case "${performance_mode-}" in
@@ -753,7 +751,6 @@ rcctl start apmd ntpd sndiod sshd
 
 if [ -n "${wlan_interface-}" ]; then
 	msg "Setting up the wireless network interface ${wlan_interface}..."
-
 	status="$(get_interface_status "${wlan_interface}")"
 
 	if [ "${status}" != 'active' ]; then
@@ -805,6 +802,5 @@ fi
 
 if [ -n "${package_list-}" ]; then
 	msg 'Installing software packages...'
-
 	printf '%s\n' "${package_list}" | pkg_add -l /dev/stdin -Uu
 fi
