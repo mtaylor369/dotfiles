@@ -59,10 +59,10 @@ fi
 
 case "${cmd}" in
 	'up')
-		sndioctl 'output.level=+0.2'
+		sndioctl 'output.level=+0.05'
 		;;
 	'down')
-		sndioctl 'output.level=-0.2'
+		sndioctl 'output.level=-0.05'
 		;;
 	'toggle-mute')
 		sndioctl 'output.mute=!'
