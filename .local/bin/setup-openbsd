@@ -2,7 +2,7 @@
 #
 # setup-openbsd
 #
-# Personal post-installation script to set up OpenBSD 7.5 for desktop use.
+# Personal post-installation script to set up OpenBSD 7.6 for desktop use.
 #
 # Usage: setup-openbsd
 #
@@ -165,6 +165,7 @@ case "${hostname}" in
 		readonly display_width=3840
 		readonly display_height=2160
 		readonly display_scale=2
+		readonly autologin_user="${admin}"
 		readonly performance_mode='high'
 		readonly wlan_interface='iwm0'
 
@@ -193,7 +194,7 @@ case "${hostname}" in
 		;;
 esac
 
-msg "Setting up the system administrator user ${admin}..."
+msg "Setting up user ${admin} as the system administrator..."
 
 if ! id "${admin}" >/dev/null 2>&1; then
 	useradd -c "${admin_comment:-"${admin}"}" -m "${admin}"
@@ -725,6 +726,37 @@ done
 do_exit
 EOF
 
+if [ -n "${autologin_user-}" ]; then
+	awk -v autologin_user="${autologin_user}" '
+	BEGIN {
+		autologin_line_printed = 0;
+	}
+
+	{
+		if ($0 ~ /^DisplayManager\.\*\.autoLogin:/) {
+			if (autologin_line_printed == 0) {
+				printf("DisplayManager.*.autoLogin: %s\n", \
+				    autologin_user);
+				autologin_line_printed = 1;
+			}
+
+			next;
+		}
+
+		sub(/[\t ]*$/, "", $0);
+		printf("%s\n", $0);
+	}
+
+	END {
+		if (autologin_line_printed == 0) {
+			printf("\n");
+			printf("DisplayManager.*.autoLogin: %s\n", \
+			    autologin_user);
+		}
+	}' /etc/X11/xenodm/xenodm-config \
+	    | create_file 0444 /etc/X11/xenodm/xenodm-config
+fi
+
 msg 'Setting up system daemons...'
 rcctl enable apmd ntpd smtpd sndiod sshd xenodm
 
@@ -746,6 +778,7 @@ case "${performance_mode-}" in
 		;;
 esac
 
+rcctl set sndiod flags -f 'rsnd/0' -F 'rsnd/1'
 rcctl stop apmd ntpd sndiod sshd >/dev/null
 rcctl start apmd ntpd sndiod sshd
 
