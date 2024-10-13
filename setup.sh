@@ -92,6 +92,50 @@ install_file() (
 	printf 'Installed: %s\n' "${dest_file}" >&2
 )
 
+create_file() (
+	mode="$1"
+	file="$2"
+
+	if [ -e "${file}" ]; then
+		if [ ! -f "${file}" ]; then
+			error_msg "cannot update ${file}:" \
+			    'existing path is not a regular file'
+			exit 1
+		fi
+
+		str='update:Updated'
+	else
+		file_dir="$(dirname "${file}")"
+		mkdir -p "${file_dir}"
+		str='create:Created'
+	fi
+
+	if command -v mktemp >/dev/null; then
+		tmp_file="$(mktemp -t "${file##*/}.XXXXXXXX")"
+	else
+		tmp_file="$(printf 'mkstemp(%s)\n' \
+		    "${TMPDIR:-/tmp}/${file##*/}.XXXXXXXX" | m4)"
+
+		if [ ! -f "${tmp_file}" ]; then
+			error_msg 'failed to create temporary file'
+			exit 1
+		fi
+	fi
+
+	trap 'rm "${tmp_file}"; trap - EXIT' EXIT
+	cat >"${tmp_file}"
+
+	if ! grep -qvx '' "${tmp_file}"; then
+		error_msg "cannot ${str%%:*} ${file}: file content was empty"
+		exit 1
+	fi
+
+	chmod "${mode}" "${tmp_file}"
+	mv "${tmp_file}" "${file}"
+	trap - EXIT
+	printf '%s: %s\n' "${str##*:}" "${file}" >&2
+)
+
 uid="$(id -u)"
 
 if [ "${uid}" = '0' ]; then
@@ -197,11 +241,34 @@ if command -v firefox >/dev/null; then
 	install_file 0755 .local/bin/setup-firefox
 fi
 
-if command -v git >/dev/null \
-    && [ -f "${DOTFILES_DIR}/.config/git/config.local" ]; then
+if command -v git >/dev/null; then
 	msg 'Installing dotfiles for git(1)...'
+	local_git_config="${HOME}/.config/git/config.local"
+
+	if [ ! -f "${local_git_config}" ]; then
+		git_user_name=''
+		git_user_email=''
+
+		while [ -z "${git_user_name}" ]; do
+			printf 'Enter full name for Git user: '
+			read -r git_user_name </dev/tty
+		done
+
+		while [ -z "${git_user_email}" ]; do
+			printf 'Enter email address for Git user: '
+			read -r git_user_email </dev/tty
+		done
+
+		tab="$(printf '\t')"
+
+		create_file 0644 "${local_git_config}" <<-EOF
+		[user]
+		${tab}name = ${git_user_name}
+		${tab}email = ${git_user_email}
+		EOF
+	fi
+
 	install_file 0644 .config/git/config
-	install_file 0644 .config/git/config.local
 fi
 
 if command -v krita >/dev/null; then
