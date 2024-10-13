@@ -235,6 +235,7 @@ if command -v sh >/dev/null \
 	msg 'Installing dotfiles for sh(1)...'
 	install_file 0644 .config/sh/aliases
 	install_file 0644 .config/sh/shrc
+	install_file 0644 .profile
 fi
 
 if command -v tmux >/dev/null; then
